@@ -16,7 +16,7 @@ Mirror an Android phone's screen **and sound** to an Android TV over your local 
 2. Open it. Android asks to allow "install unknown apps" for the app you opened it from. Allow it, then install.
 
 **Android TV**
-- Easiest: install a file-manager app on the TV (e.g. "File Commander" or "X-plore"), put the APK on a USB stick or reach it over the network, open it from there. Allow "install unknown apps" for that file manager in the TV's settings.
+- Easiest: install a "Send Files To Tv" and "APK installer" to reach it over the network, open it from there. Allow "install unknown apps.
 - Or with `adb` from a PC (enable Developer options, then USB/network debugging on the TV):
   ```
   adb connect <tv-ip>:5555
