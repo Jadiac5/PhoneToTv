@@ -29,6 +29,7 @@ class SettingsActivity : Activity() {
     private lateinit var updateButton: TextView
     private lateinit var muteStatus: TextView
     private lateinit var muteButton: TextView
+    private lateinit var syncValue: TextView
 
     private val updateListener: (UpdateState) -> Unit = { renderUpdate(it) }
 
@@ -87,6 +88,7 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             addView(buildAutoCheckCard())
             addView(buildMuteCard(), lp(top = 12))
+            addView(buildSyncCard(), lp(top = 12))
             addView(
                 Ui.label(
                     this@SettingsActivity,
@@ -160,6 +162,50 @@ class SettingsActivity : Activity() {
         card.addView(muteButton, lp(top = 12))
         renderMute()
         return card
+    }
+
+    private fun buildSyncCard(): LinearLayout {
+        val card = Ui.card(this)
+        card.addView(Ui.label(this, "Picture and sound in step", 18f, bold = true))
+        card.addView(
+            Ui.label(
+                this,
+                "On the TV the picture follows the sound automatically. If it is still early or late (a soundbar or " +
+                    "Bluetooth speaker adds delay), nudge it here: plus delays the picture.",
+                14f, Ui.MUTED
+            ),
+            lp(top = 4)
+        )
+        syncValue = Ui.label(this, "", 16f, bold = true)
+        card.addView(syncValue, lp(top = 10))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val gap = Ui.dp(this, 8)
+        row.addView(
+            Ui.button(this, "Earlier") { nudgeSync(-Prefs.SYNC_STEP_MS) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = gap }
+        )
+        row.addView(
+            Ui.button(this, "Later") { nudgeSync(Prefs.SYNC_STEP_MS) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = gap }
+        )
+        card.addView(row, lp(top = 10))
+        renderSync()
+        return card
+    }
+
+    private fun nudgeSync(delta: Int) {
+        Prefs.setSyncOffsetMs(this, Prefs.syncOffsetMs(this) + delta)
+        renderSync()
+    }
+
+    private fun renderSync() {
+        if (!::syncValue.isInitialized) return
+        val v = Prefs.syncOffsetMs(this)
+        syncValue.text = when {
+            v == 0 -> "Picture delay: none (automatic)"
+            v > 0 -> "Picture delay: +$v ms"
+            else -> "Picture delay: $v ms"
+        }
     }
 
     // ---- state ----------------------------------------------------------------------------------------

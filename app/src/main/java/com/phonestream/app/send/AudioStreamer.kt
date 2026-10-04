@@ -8,6 +8,7 @@ import android.media.AudioRecord
 import android.media.projection.MediaProjection
 import android.os.Build
 import android.os.Process
+import com.phonestream.app.core.AudioStamp
 import com.phonestream.app.core.Msg
 import com.phonestream.app.core.Proto
 
@@ -84,6 +85,7 @@ class AudioStreamer(
         } catch (_: Exception) {
         }
         val buf = ByteArray(CHUNK_BYTES)
+        val stamp = AudioStamp(Proto.AUDIO_RATE)
         while (running) {
             var got = 0
             while (got < CHUNK_BYTES && running) {
@@ -95,7 +97,7 @@ class AudioStreamer(
                 got += n
             }
             if (got > 0 && running) {
-                writer.sendAudio(Msg.audioData(System.nanoTime() / 1000, buf, got))
+                writer.sendAudio(Msg.audioData(stamp.stamp(System.nanoTime() / 1000, got / FRAME_BYTES), buf, got))
                 onPeak?.invoke(peak(buf, got))
             }
         }
@@ -128,5 +130,6 @@ class AudioStreamer(
     companion object {
         /** 20 ms of 48 kHz stereo 16-bit. */
         const val CHUNK_BYTES = Proto.AUDIO_RATE / 50 * Proto.AUDIO_CHANNELS * 2
+        private const val FRAME_BYTES = Proto.AUDIO_CHANNELS * 2
     }
 }

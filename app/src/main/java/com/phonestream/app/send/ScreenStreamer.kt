@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.view.Surface
 import com.phonestream.app.core.Fit
 import com.phonestream.app.core.StreamPlan
+import com.phonestream.app.core.sanePts
 import com.phonestream.app.media.Codecs
 
 /** The screen capture itself (e.g. a revoked/unsupported MediaProjection), as opposed to a codec problem. */
@@ -214,7 +215,7 @@ class ScreenStreamer(
                             val cfg = config
                             // Every key frame must carry SPS/PPS(/VPS) so the receiver can start decoding there.
                             val data = if (key && cfg != null && !body.startsWith(cfg)) cfg + body else body
-                            writer.sendVideo(gen, key, info.presentationTimeUs, data)
+                            writer.sendVideo(gen, key, sanePts(info.presentationTimeUs, System.nanoTime() / 1000), data)
                         }
                     }
                 } catch (e: Exception) {

@@ -2,6 +2,16 @@
 
 The section of the newest version is what the app shows as "What's new" when it offers an update.
 
+## 1.1.1
+
+- **No more stutter-then-fast-forward.** The TV used to show every frame the moment it was decoded, so when Wi-Fi or a big frame (lots of motion on screen) held the stream up for a moment, the picture froze and then played everything that had piled up at high speed. Frames now carry the phone's capture time and the TV plays them at that pace, with a small adaptive buffer (it grows at once when the network hiccups and shrinks slowly). If the TV is ever far behind, the picture jumps ahead instead of racing through the backlog.
+- **Picture and sound in step.** The sound reached the speaker later than the picture reached the screen (cushion, speaker buffer, audio driver), so for example the sound kept going for a moment after you paused a video. The TV now measures when each piece of sound is really heard and shows the matching picture at that moment. The sender also time-stamps the sound more evenly.
+- **Settings, "Picture and sound in step"** (on the TV): Earlier/Later buttons to fine-tune for a soundbar or Bluetooth speaker, which add delay the app can't measure.
+- The sender reacts earlier to a slowing network (lowers bitrate sooner).
+- Cost: the picture now waits for the sound, which adds roughly 0.1 s of overall delay compared with 1.1.0.
+
+Install it on both phone and TV (the protocol is unchanged, so the in-app update works). The sender-side changes only take effect once the phone is updated too.
+
 ## 1.1.0
 
 - **Updates from inside the app.** The gear icon on the start screen opens Settings with one button: "Check for updates" turns into "Update to vX" when a newer release exists. A small pill on the start screen also appears whenever an update is available. Downloads come from this repository's releases only and are verified before installing. The app looks for updates when it opens (switch in Settings).

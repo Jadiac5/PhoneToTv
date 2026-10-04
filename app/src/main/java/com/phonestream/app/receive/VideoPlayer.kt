@@ -4,6 +4,8 @@ import android.media.MediaCodec
 import android.os.Process
 import android.os.SystemClock
 import android.view.Surface
+import com.phonestream.app.core.Pacing
+import com.phonestream.app.core.PlayoutClock
 import com.phonestream.app.core.Stats
 import com.phonestream.app.core.VideoConfig
 import com.phonestream.app.core.VideoFrame
@@ -15,15 +17,21 @@ import kotlin.math.min
  *
  * Three threads, so that nothing on the TV can stall the network (which also carries the sound):
  *  - the network thread only drops frames into a queue ([feed], never blocks);
- *  - an input thread hands them to the decoder (waits for a free input buffer instead of dropping the frame,
- *    because every dropped frame means a visible glitch until the next key frame);
- *  - an output thread shows what comes out. If several frames are ready at once only the newest is put on screen
- *    (the others were decoded, so later frames still decode correctly, but nobody waits to see them).
+ *  - an input thread hands them to the decoder shortly before they are due (waits for a free input buffer instead
+ *    of dropping the frame, because every dropped frame means a visible glitch until the next key frame);
+ *  - an output thread puts what comes out on the screen at its due time.
+ *
+ * "Due" comes from the [PlayoutClock]: the frame's capture time on the phone plus the delay the sound has on its
+ * way to the speaker. So the picture plays at the pace it was captured however unevenly the network delivered it
+ * (a late frame no longer makes the picture hang and then race to catch up) and it stays in step with the sound.
+ * A frame that comes out of the decoder long after its due time (the TV was stalled) is not rushed onto the
+ * screen together with all the others behind it: see [Pacing.showFrame].
  *
  * Only a hopeless backlog (the decoder really can't keep up) is thrown away: playback jumps to the newest key
  * frame, or asks the sender for one. The sender is told ([takeStats]) and lowers the frame rate.
  */
 class VideoPlayer(
+    private val clock: PlayoutClock,
     private val requestKeyFrame: () -> Unit,
     private val onFatal: (String) -> Unit,
 ) : VideoSink {
@@ -79,6 +87,7 @@ class VideoPlayer(
     fun release() = configure(null)
 
     override fun feed(f: VideoFrame) {
+        clock.onVideoArrival(f.ptsUs, System.nanoTime())
         synchronized(qLock) {
             if (decoder == null) return
             queue.addLast(f)
@@ -121,6 +130,7 @@ class VideoPlayer(
             minQueue = Int.MAX_VALUE
             skipped = 0
         }
+        clock.resetVideo()
         val s = surface
         val c = config
         if (s == null || !s.isValid || c == null) return
@@ -158,29 +168,60 @@ class VideoPlayer(
 
     // ---- threads -------------------------------------------------------------------------------------
 
-    /** Next frame to decode, or null when [d] is gone. Also throws away a hopeless backlog. */
+    /** When [f] is due, as a believable time. */
+    private fun dueOf(f: VideoFrame, now: Long) = Pacing.plausibleDue(clock.dueNs(f.ptsUs), now)
+
+    /** How many frames at the head of the queue are due to go into the decoder by now (with [qLock] held). */
+    private fun readyCount(now: Long): Int {
+        var n = 0
+        for (f in queue) {
+            if (Pacing.submitAtNs(dueOf(f, now), now) > now) break
+            n++
+        }
+        return n
+    }
+
+    /**
+     * Next frame to decode, or null when [d] is gone. Waits until the frame is due (a bit before: the decoder
+     * needs time), and throws away a hopeless backlog: frames that are due but still waiting for the decoder.
+     * Frames that are merely waiting for their time are the jitter buffer, not a backlog.
+     */
     private fun takeFrame(d: Decoder): VideoFrame? {
         var askKey = false
         val f = synchronized(qLock) {
-            while (d.alive && queue.isEmpty()) qLock.wait(200)
-            if (!d.alive) return null
-            if (queue.size > CATCH_UP_DEPTH) {
-                val newestKey = queue.indexOfLast { it.key }
-                if (newestKey > 0) {
-                    repeat(newestKey) { queue.removeFirst() }
-                    skipped += newestKey
-                } else if (queue.size > MAX_QUEUE) {
-                    skipped += queue.size
-                    queue.clear()
-                    waitingKey = true
-                    askKey = true
+            var taken: VideoFrame? = null
+            while (d.alive && taken == null) {
+                if (queue.isEmpty()) {
+                    qLock.wait(200)
+                    continue
                 }
+                val now = System.nanoTime()
+                var ready = readyCount(now)
+                if (ready > CATCH_UP_DEPTH) {
+                    var newestKey = -1 // only among the due frames: a key frame still waiting for its time is no reason to jump
+                    for (i in 0 until ready) if (queue[i].key) newestKey = i
+                    if (newestKey > 0) {
+                        repeat(newestKey) { queue.removeFirst() }
+                        skipped += newestKey
+                    } else if (ready > MAX_QUEUE) {
+                        skipped += queue.size
+                        queue.clear()
+                        waitingKey = true
+                        askKey = true
+                    }
+                    if (queue.isEmpty()) continue
+                    ready = readyCount(now)
+                }
+                val head = queue.first()
+                val at = if (waitingKey) now else Pacing.submitAtNs(dueOf(head, now), now)
+                if (at > now) {
+                    qLock.wait(((at - now) / 1_000_000L).coerceIn(1L, 200L))
+                    continue
+                }
+                minQueue = min(minQueue, (ready - 1).coerceAtLeast(0))
+                taken = queue.removeFirst()
             }
-            if (queue.isEmpty()) null
-            else {
-                minQueue = min(minQueue, queue.size - 1)
-                queue.removeFirst()
-            }
+            taken
         }
         if (askKey) askForKeyFrame()
         return f
@@ -218,17 +259,21 @@ class VideoPlayer(
     private fun outputLoop(d: Decoder) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
         val info = MediaCodec.BufferInfo()
-        var pending = -1 // a decoded frame we hold back, in case a newer one is already waiting
+        var lastShown = 0L // display time of the frame shown last
         try {
             while (d.alive) {
-                val idx = d.codec.dequeueOutputBuffer(info, if (pending >= 0) 0 else 10_000)
-                if (idx >= 0) {
-                    if (pending >= 0) d.codec.releaseOutputBuffer(pending, false) // superseded: don't show
-                    pending = idx
-                } else if (pending >= 0) {
-                    d.codec.releaseOutputBuffer(pending, true) // render immediately
-                    pending = -1
+                val idx = d.codec.dequeueOutputBuffer(info, 10_000)
+                if (idx < 0) continue
+                val now = System.nanoTime()
+                val due = Pacing.plausibleDue(clock.dueNs(info.presentationTimeUs), now)
+                if (Pacing.showFrame(due, now, lastShown)) {
+                    val at = Pacing.renderAtNs(due, now)
+                    d.codec.releaseOutputBuffer(idx, at) // the display shows it at that time
+                    lastShown = at
                     framesShown++
+                } else {
+                    d.codec.releaseOutputBuffer(idx, false) // decoded, but too late to be worth showing
+                    synchronized(qLock) { skipped++ }
                 }
             }
         } catch (e: Exception) {
@@ -257,7 +302,7 @@ class VideoPlayer(
         private const val INPUT_WAIT_US = 20_000L
         private const val KEY_REQUEST_INTERVAL_MS = 500L
 
-        /** More frames than this waiting (~130 ms at 60 fps): skip ahead to the newest key frame if there is one. */
+        /** More frames than this due and waiting (~130 ms at 60 fps): skip ahead to the newest key frame if there is one. */
         private const val CATCH_UP_DEPTH = 8
 
         /** More than this (~400 ms) and no key frame to jump to: give up on the backlog and ask for a key frame. */

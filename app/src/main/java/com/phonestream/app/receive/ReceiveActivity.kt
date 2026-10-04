@@ -22,6 +22,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.phonestream.app.Prefs
+import com.phonestream.app.core.PlayoutClock
 import com.phonestream.app.core.resolutionLabel
 import com.phonestream.app.net.DeviceInfo
 import com.phonestream.app.net.ReceiverAdvertiser
@@ -47,7 +48,8 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     private lateinit var overlayHint: TextView
     private lateinit var disconnectButton: TextView
 
-    private val audio = AudioPlayer()
+    private val clock = PlayoutClock()
+    private val audio = AudioPlayer(clock)
     private lateinit var video: VideoPlayer
     private lateinit var server: ReceiverServer
     private lateinit var advertiser: ReceiverAdvertiser
@@ -78,6 +80,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
 
         deviceName = DeviceInfo.deviceName(this)
         video = VideoPlayer(
+            clock = clock,
             requestKeyFrame = { server.requestKeyFrame() },
             onFatal = { msg -> onPlaybackFailed(msg) },
         )
@@ -118,6 +121,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
 
     override fun onStart() {
         super.onStart()
+        clock.syncOffsetMs = Prefs.syncOffsetMs(this)
         lastIps = DeviceInfo.localIpv4()
         updateIpText()
         advertiser.start()

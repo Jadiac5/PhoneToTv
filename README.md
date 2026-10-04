@@ -7,7 +7,7 @@ Mirror an Android phone's screen **and sound** to an Android TV over your local 
 
 **Download:** the APK is attached to the [latest release](https://github.com/Jadiac5/PhoneToTv/releases/latest) (Android 8.0+, phone and Android TV).
 
-> **Status: tested on a PC only for 1.1.0.** The code compiles, 108 automated JVM tests pass (protocol, slicing writer, bitrate tuner, updater, a loopback receiver and a simulated slow Wi-Fi link) and lint has 0 errors, but there is no automated test of the screen-capture, encoder, decoder or speaker parts. Those only run on real phones and TVs; see [Known limitations](#known-limitations).
+> **Status: tested on a PC only for 1.1.1.** The code compiles, 138 automated JVM tests pass (protocol, slicing writer, bitrate tuner, picture/sound timing, updater, a loopback receiver and a simulated slow Wi-Fi link) and lint has 0 errors, but there is no automated test of the screen-capture, encoder, decoder or speaker parts. Those only run on real phones and TVs; see [Known limitations](#known-limitations).
 
 ## Installing
 
@@ -76,14 +76,16 @@ How it keeps the delay low:
 - Video frames are cut into 16 KB slices, so sound and control messages can slip in between instead of waiting behind a large key frame. Sound goes first.
 - When the network falls behind, video that has waited too long is dropped and the stream resumes at the next key frame, so you see brief glitches instead of a growing delay.
 - Bitrate follows the measured delay and drops; frame rate follows how well the TV's decoder copes (the TV reports once a second).
-- The TV shows frames as soon as they are decoded; sound has a small cushion (about 80 ms) that grows if the Wi-Fi hiccups and shrinks again when it is calm.
+- Sound has a small cushion (about 80 ms) on the TV that grows if the Wi-Fi hiccups and shrinks again when it is calm.
+- Every frame carries the moment the phone captured it. The TV plays frames at that pace, with a small adaptive buffer, instead of "as soon as they arrive", so a network hiccup doesn't make the picture freeze and then race to catch up. If the TV does fall far behind, the picture jumps ahead.
+- Picture and sound are kept in step: the TV asks the audio system when each piece of sound is really heard and shows the matching picture at that moment. This costs roughly 0.1 s of delay. If you use a soundbar or Bluetooth speaker, **Settings → Picture and sound in step** shifts the picture earlier or later.
 
 ## Known limitations
 
 - **Real-device behaviour is unproven** for the capture pipeline (screen → GPU relay → encoder), the TV decoder and the phone-mute check. Every risky step has a fallback (the GPU relay falls back to feeding the encoder directly, which turns off the 16:9 modes and the frame-rate limiter), but please report anything odd.
 - **Apps can block capture:** banking apps, DRM video (Netflix etc.) show black; some apps forbid internal audio capture, so their sound won't reach the TV.
 - **Android 14+** shows its screen-share consent dialog every time you start.
-- **No audio/video sync offset:** they travel separately, so lip-sync may be a few tens of ms off.
+- **Lip-sync is measured, not guaranteed:** the TV can tell when sound leaves the app, not what an HDMI link, soundbar or Bluetooth speaker adds afterwards. Use the sync buttons in Settings for that.
 - **No PIN or pairing:** anyone on the same network can send to a TV that is waiting in receive mode. Only use it on a network you trust.
 - **Public repository, public updates:** the updater trusts what the `Jadiac5/PhoneToTv` releases contain. Android only installs an update that is signed with the same key as the installed app, which protects against someone else's APK.
 - Same Wi-Fi/LAN required (port 47800 TCP, plus mDNS and UDP broadcast for discovery). Wi-Fi 5 or better recommended; a TV on Ethernet is best.
@@ -99,6 +101,7 @@ How it keeps the delay low:
 | Phone keeps playing sound | Your phone's Android lets the capture follow the volume; the app detected that and left the phone audible. Use headphones on the phone. |
 | Stops when the phone is locked or after a while | Disable battery optimization for PhoneStream; some phones kill background apps aggressively (see dontkillmyapp.com). |
 | Stutter / freezes | Move closer to the router; put the TV on Ethernet; try a lower preset. |
+| Sound a bit before or after the picture | Settings → Picture and sound in step on the TV: Later if the sound comes late (the picture waits), Earlier if the sound comes first. |
 | Update button says it can't reach GitHub | The device needs internet access for this one feature; streaming itself works offline. |
 
 ## Building from source
@@ -130,9 +133,10 @@ The [Build workflow](.github/workflows/build.yml) runs tests, lint and a debug b
 ```
 app/src/main/java/com/phonestream/app/
   MainActivity.kt        Send / Receive chooser (D-pad friendly for TV), update pill
-  SettingsActivity.kt    update button, auto-check switch, phone-speaker check
+  SettingsActivity.kt    update button, auto-check switch, phone-speaker check, picture/sound sync
   core/                  wire protocol (Proto, Msg, FrameAssembler), Planner (sizes, 16:9),
-                         Tuner (adaptive bitrate / fps), MuteGuard, AudioBuffering
+                         Tuner (adaptive bitrate / fps), MuteGuard, AudioBuffering,
+                         PlayoutClock + Pacing (when each frame is shown), AudioStamp
   net/                   device name, discovery (NSD + UDP broadcast + manual IP)
   media/Codecs.kt        encoder/decoder capability checks
   send/                  SendActivity, StreamService (foreground service), ScreenStreamer + GlRelay,

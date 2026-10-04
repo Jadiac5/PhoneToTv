@@ -43,6 +43,16 @@ object Prefs {
     // commit(), not apply(): this must be on disk before the volume goes down, in case the app dies mid-stream
     fun setSavedVolume(c: Context, v: Int) = sp(c).edit().putInt("savedVolume", v).commit()
 
+    // ---- picture/sound sync ----
+
+    /** Extra delay of the picture on the TV relative to the sound, in ms (for a soundbar or Bluetooth speaker that adds delay). */
+    fun syncOffsetMs(c: Context): Int = sp(c).getInt("syncOffsetMs", 0).coerceIn(SYNC_MIN_MS, SYNC_MAX_MS)
+    fun setSyncOffsetMs(c: Context, v: Int) = sp(c).edit().putInt("syncOffsetMs", v.coerceIn(SYNC_MIN_MS, SYNC_MAX_MS)).apply()
+
+    const val SYNC_MIN_MS = -200
+    const val SYNC_MAX_MS = 600
+    const val SYNC_STEP_MS = 20
+
     // ---- updates ----
 
     /** Look for a new version when the app starts (at most every few hours). */

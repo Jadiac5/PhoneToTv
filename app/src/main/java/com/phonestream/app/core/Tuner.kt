@@ -83,8 +83,8 @@ class Tuner(
     }
 
     companion object {
-        const val BAD_LATENCY_MS = 220
-        const val GOOD_LATENCY_MS = 100
+        const val BAD_LATENCY_MS = 150
+        const val GOOD_LATENCY_MS = 80
         const val CUT_GAP_MS = 800L
         const val RAISE_GAP_MS = 1000L
         const val BASE_HOLD_MS = 3_000L
