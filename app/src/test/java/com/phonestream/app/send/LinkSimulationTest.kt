@@ -26,6 +26,9 @@ class LinkSimulationTest {
         val arrivals: MutableList<Arrival> = Collections.synchronizedList(ArrayList())
         private var busyUntil = System.nanoTime()
 
+        /** Iterating a synchronized list is only safe while holding its lock; the writer thread appends concurrently. */
+        fun count(type: Int): Int = synchronized(arrivals) { arrivals.count { it.type == type } }
+
         override fun write(b: Int) = throw UnsupportedOperationException()
 
         override fun write(b: ByteArray, off: Int, len: Int) {
@@ -93,7 +96,7 @@ class LinkSimulationTest {
 
         // let whatever is still queued drain (audio is never dropped except past 500 ms of backlog)
         val deadline = System.nanoTime() + 4_000_000_000L
-        while (System.nanoTime() < deadline && link.arrivals.count { it.type == Proto.T_AUDIO_DATA } < audioChunks) Thread.sleep(20)
+        while (System.nanoTime() < deadline && link.count(Proto.T_AUDIO_DATA) < audioChunks) Thread.sleep(20)
         writer.close(null, 1000)
 
         val arrivals = synchronized(link.arrivals) { ArrayList(link.arrivals) }
