@@ -243,3 +243,27 @@ class UpdateUiTest {
         assertTrue(cut.endsWith("…"))
     }
 }
+
+/** The unauthenticated answer GitHub really gave for this repository's v1.1.0 release (fields the app doesn't read left out). */
+class RealGitHubResponseTest {
+    private val json = RealGitHubResponseTest::class.java.getResourceAsStream("/github-latest-release.json")!!
+        .readBytes().toString(Charsets.UTF_8)
+
+    @Test
+    fun theAppUnderstandsWhatGitHubActuallySends() {
+        val r = ReleaseParser.parse(json) ?: throw AssertionError("real release was not accepted")
+        assertEquals("1.1.0", r.version)
+        assertEquals("https://github.com/Jadiac5/PhoneToTv/releases/download/v1.1.0/PhoneStream-1.1.0.apk", r.apkUrl)
+        assertEquals(754_177L, r.size)
+        assertEquals("b6909e8326c1db39753669520b413db279a20932af4ed9fed3a619ef8f0706c0", r.sha256)
+        assertTrue(r.notes.contains("Updates from inside the app"))
+        assertEquals("https://github.com/Jadiac5/PhoneToTv/releases/tag/v1.1.0", r.pageUrl)
+    }
+
+    @Test
+    fun anInstalled100WouldBeOfferedItAnd110WouldNot() {
+        val r = ReleaseParser.parse(json)!!
+        assertTrue(Version.isNewer(r.version, "1.0.0"))
+        assertFalse(Version.isNewer(r.version, "1.1.0"))
+    }
+}

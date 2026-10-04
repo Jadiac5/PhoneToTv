@@ -1,0 +1,18 @@
+{
+  "tag_name": "v1.1.0",
+  "name": "PhoneStream 1.1.0",
+  "draft": false,
+  "prerelease": false,
+  "html_url": "https://github.com/Jadiac5/PhoneToTv/releases/tag/v1.1.0",
+  "body": "\n- **Updates from inside the app.** The gear icon on the start screen opens Settings with one button: \"Check for updates\" turns into \"Update to vX\" when a newer release exists. A small pill on the start screen also appears whenever an update is available. Downloads come from this repository's releases only and are verified before installing. The app looks for updates when it opens (switch in Settings).\n- **Smoother stream.** Video travels in small slices so sound is never stuck behind a big picture; the sender adapts bitrate and frame rate to the network and to how well the TV's decoder keeps up, and drops stale video instead of building delay. Sound has an adaptive cushion on the TV against crackling.\n- **Phone stays silent while streaming**, only the TV plays the sound. The app checks that the stream still carries sound after muting the phone; if a phone's system doesn't allow that, it un-mutes and says so.\n- **16:9 option** for landscape phones: Original, Fill 16:9 (crops the edges, no distortion) or Stretch 16:9 (squeezes the picture).\n- **Resolution is shown long side first** (for example 2400Ã—1080).\n- **Landscape layouts reworked** on phone and TV; the screens rebuild themselves when the phone is rotated.\n- Fixes and robustness: receiver refuses senders on another protocol version with a clear message; many more automated tests.\n\n**Both devices need this version**: the protocol changed, so a 1.1.0 phone can't talk to a 1.0.0 TV and vice versa. Install it by hand once on each; later updates come from the app.\n\n",
+  "assets": [
+    {
+      "name": "PhoneStream-1.1.0.apk",
+      "content_type": "application/vnd.android.package-archive",
+      "state": "uploaded",
+      "size": 754177,
+      "digest": "sha256:b6909e8326c1db39753669520b413db279a20932af4ed9fed3a619ef8f0706c0",
+      "browser_download_url": "https://github.com/Jadiac5/PhoneToTv/releases/download/v1.1.0/PhoneStream-1.1.0.apk"
+    }
+  ]
+}
