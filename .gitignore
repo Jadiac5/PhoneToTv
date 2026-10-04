@@ -1,0 +1,30 @@
+# --- Signing secrets: NEVER commit these ---
+keystore.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# --- Local configuration ---
+local.properties
+.env
+
+# --- Build output ---
+build/
+.gradle/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+dist/
+*.apk
+*.aab
+*.ap_
+
+# --- IDE / OS ---
+.idea/
+*.iml
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db

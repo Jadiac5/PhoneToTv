@@ -1,0 +1,106 @@
+name: Release
+
+# Push a tag such as v1.2.0 (after raising appVersion / appVersionCode in app/build.gradle.kts) and this
+# builds the signed APK and publishes it as a GitHub release. The app's "Check for updates" button reads
+# exactly that release.
+#
+# Needs four repository secrets (Settings > Secrets and variables > Actions):
+#   KEYSTORE_BASE64    the release keystore, base64 encoded:  base64 -w0 phonestream-release.jks
+#   KEYSTORE_PASSWORD  keystore password
+#   KEY_ALIAS          key alias
+#   KEY_PASSWORD       key password
+# The APK must be signed with the SAME key as the installed app, or Android refuses to update over it.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Already published?
+        id: existing
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists (published by hand), nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag must match the app version
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          version=$(sed -n 's/^val appVersion = "\(.*\)"/\1/p' app/build.gradle.kts)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match appVersion $version in app/build.gradle.kts"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Signing secrets present?
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          for v in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Secret $v is missing. A release signed with another key could not update installed apps, so none is built. See the comment at the top of release.yml."
+              exit 1
+            fi
+          done
+          echo "$KEYSTORE_BASE64" | base64 -d > phonestream-release.jks
+          {
+            echo "storeFile=phonestream-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+
+      - uses: actions/setup-java@v4
+        if: steps.existing.outputs.skip != 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.existing.outputs.skip != 'true'
+
+      - name: Test and build the signed APK
+        if: steps.existing.outputs.skip != 'true'
+        run: ./gradlew testDebugUnitTest assembleRelease --console=plain
+
+      - name: Check the signature
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          apk=app/build/outputs/apk/release/PhoneStream-${VERSION}-release.apk
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "$apk" | grep -E "Verifies|SHA-256"
+          cp "$apk" "PhoneStream-${VERSION}.apk"
+
+      - name: Release notes
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          # the matching section of CHANGELOG.md; the app shows it as "What's new"
+          awk -v v="$VERSION" '
+            /^## / { if (on) exit; on = ($2 == v || $2 == "[" v "]") ; next }
+            on' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "Version $VERSION" > notes.md; fi
+          cat notes.md
+
+      - name: Publish
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          gh release create "$TAG" "PhoneStream-${VERSION}.apk" \
+            --title "PhoneStream $VERSION" --notes-file notes.md --verify-tag
