@@ -2,6 +2,17 @@
 
 The section of the newest version is what the app shows as "What's new" when it offers an update.
 
+## 1.1.4
+
+- **A TV that stops answering can now be repaired without restarting it.** Some TVs stopped answering the phone ("No route to host") while the app on them was fine; the app, the port and the Wi-Fi lock were all in order, so the fault sits in the TV's Wi-Fi connection itself, which only a restart reset. The Receive screen now has a **Fix connection** button that does what the restart did for the connection: a fresh listening port, a fresh announcement, and (where the TV allows apps to do it) dropping and rejoining the Wi-Fi.
+- **It also happens by itself.** When a phone cannot reach the TV it broadcasts a short "please refresh" to the network (a broadcast needs no route to the TV), keeps retrying for about half a minute, and the TV, when it hears it, refreshes its connection (never while it is streaming, and at most once every 90 seconds). The TV does the same if it loses contact with its own router for 15 seconds. The phone's status says "Asked <TV> to refresh its Wi-Fi connection." while that happens.
+- **The Receive screen shows the state of the network** in one line: Wi-Fi band, signal and speed, whether the router answers, when a phone was last heard, and when the connection was last refreshed. If the problem returns, a photo of that line shows what the TV could and couldn't hear.
+- **The phone sends its connection over the home Wi-Fi** even when mobile data or a VPN is the default network, so a phone with mobile data on cannot send the connection the wrong way.
+- Connection attempts are 3 s each and there are five of them (up to about 30 s in the worst case), to give a TV that has just been asked to refresh time to come back.
+- Where Android does not let apps reset the Wi-Fi (Android 10 and newer TVs), the button restarts everything else and says to switch Wi-Fi off and on in the TV's network settings if phones still can't connect.
+
+Install it on both phone and TV (the protocol is unchanged, so the in-app update works).
+
 ## 1.1.3
 
 - **The phone no longer gives up after one failed try.** Some phones got "Can't reach <TV> … (No route to host)" while the TV showed Receive mode, and only restarting the TV helped. That message means the phone could not even get a packet to the TV's address (the app on the TV was not the problem). A connect now tries up to four times over about fifteen seconds ("Still trying to reach <TV>… (try 2 of 4)"), and between tries the phone asks the network where a device with that name answers right now, so an address that has changed since the list was built is replaced by the current one.

@@ -53,6 +53,9 @@ object Proto {
     // UDP discovery (fallback for networks where mDNS is filtered)
     const val UDP_PROBE = "PSTREAM?1"
     const val UDP_REPLY = "PSTREAM!1"
+
+    /** A phone that cannot reach a receiver asks it, by broadcast, to refresh its own network connection. */
+    const val UDP_HELP = "PSTREAM#1"
 }
 
 class Packet(val type: Int, val payload: ByteArray)

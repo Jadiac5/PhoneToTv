@@ -27,6 +27,7 @@ import com.phonestream.app.core.VideoConfig
 import com.phonestream.app.media.Codecs
 import com.phonestream.app.net.ConnectPolicy
 import com.phonestream.app.net.DeviceInfo
+import com.phonestream.app.net.LanNetwork
 import com.phonestream.app.net.NoAnswerException
 import com.phonestream.app.net.Receiver
 import com.phonestream.app.net.ReceiverLocator
@@ -209,9 +210,11 @@ class SenderSession(
         var candidates = listOf(target) + alternates.filter { it.key != target.key }
         var last: Exception? = null
         var tries = 0
+        var askedForHelp = false
         for (attempt in 0 until ConnectPolicy.ATTEMPTS) {
             if (attempt > 0) {
-                StreamState.update { it.copy(status = "Still trying to reach ${target.name}… (try ${attempt + 1} of ${ConnectPolicy.ATTEMPTS})") }
+                val asked = if (askedForHelp) "\nAsked ${target.name} to refresh its Wi-Fi connection." else ""
+                StreamState.update { it.copy(status = "Still trying to reach ${target.name}… (try ${attempt + 1} of ${ConnectPolicy.ATTEMPTS})$asked") }
                 if (!pause(ConnectPolicy.pauseBeforeMs(attempt))) return null
                 candidates = relocate(candidates)
                 if (closed.get()) return null
@@ -224,10 +227,16 @@ class SenderSession(
             } catch (e: Exception) {
                 if (closed.get() || !ConnectPolicy.retryable(e)) throw e
                 last = e
+                // The network says nobody is there. If the receiver's own Wi-Fi has gone deaf, it can't hear the
+                // phone's connection, but it may still hear a broadcast: ask it to refresh, and keep trying meanwhile.
+                if (!askedForHelp && ConnectPolicy.unreachable(e)) {
+                    askedForHelp = true
+                    try { ReceiverLocator.askForHelp(target.name, r.host) } catch (_: Exception) {}
+                }
             }
         }
         val e = last ?: IOException("Could not connect")
-        throw IOException(ConnectPolicy.explain(target.name, current.host, current.port, e, tries))
+        throw IOException(ConnectPolicy.explain(target.name, current.host, current.port, e, tries, askedForHelp))
     }
 
     /** Sleeps [ms] in small steps; false if the session was ended meanwhile. */
@@ -254,6 +263,7 @@ class SenderSession(
     private fun connectTo(r: Receiver): PacketStream {
         try { socket?.close() } catch (_: Exception) {}
         val s = Socket()
+        LanNetwork.bind(ctx, s)
         socket = s
         if (closed.get()) {
             s.close()

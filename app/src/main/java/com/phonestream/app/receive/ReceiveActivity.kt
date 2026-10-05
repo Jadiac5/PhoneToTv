@@ -25,9 +25,13 @@ import com.phonestream.app.Prefs
 import com.phonestream.app.core.PlayoutClock
 import com.phonestream.app.core.resolutionLabel
 import com.phonestream.app.net.DeviceInfo
+import com.phonestream.app.net.HealPolicy
+import com.phonestream.app.net.NetworkHealth
 import com.phonestream.app.net.ReceiverAdvertiser
 import com.phonestream.app.net.WifiKeepAlive
+import com.phonestream.app.net.WifiRecovery
 import com.phonestream.app.ui.Ui
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Receive mode (the TV): advertises this device by name on the LAN, waits for a sender and shows its screen
@@ -42,6 +46,8 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     private lateinit var idleStatus: TextView
     private lateinit var idleNote: TextView
     private lateinit var ipText: TextView
+    private lateinit var healthText: TextView
+    private lateinit var fixButton: TextView
     private lateinit var stopButton: TextView
     private lateinit var overlay: LinearLayout
     private lateinit var overlayTitle: TextView
@@ -66,10 +72,25 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     private var visible = false
     private var serverErrorShown = false
 
+    // Self-repair of the network connection (see heal()). Main thread only, except [checkingRouter].
+    private val healPolicy = HealPolicy()
+    private var healing = false
+    private var routerOk: Boolean? = null
+    private var resetNote: String? = null
+    private val checkingRouter = AtomicBoolean(false)
+
     @Volatile
     private var pendingNote: String? = null
 
     private val hideOverlay = Runnable { setOverlayVisible(false) }
+
+    private val healthTick = object : Runnable {
+        override fun run() {
+            if (!visible || isDestroyed) return
+            checkHealth()
+            main.postDelayed(this, HEALTH_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,6 +111,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         )
         server = ReceiverServer(deviceName, video, audio, this)
         advertiser = ReceiverAdvertiser(this, deviceName)
+        advertiser.onHelpRequested = { from -> main.post { onHelpRequested(from) } }
         wifiKeepAlive = WifiKeepAlive(this)
 
         val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
@@ -134,10 +156,13 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         wifiKeepAlive.acquire()
         server.start()
         watchNetwork()
+        routerOk = null
+        main.post(healthTick)
     }
 
     override fun onStop() {
         visible = false
+        main.removeCallbacks(healthTick)
         unwatchNetwork()
         server.stop()
         advertiser.stop()
@@ -147,6 +172,8 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     }
 
     override fun onDestroy() {
+        advertiser.onHelpRequested = null
+        main.removeCallbacks(healthTick)
         server.stop()
         advertiser.stop()
         wifiKeepAlive.release()
@@ -205,8 +232,12 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
             visibility = View.GONE
         }
         col.addView(idleNote, lp(top = gap))
+        healthText = Ui.label(this, "", 12f, Ui.MUTED).apply { gravity = Gravity.CENTER }
+        col.addView(healthText, lp(top = gap))
+        fixButton = Ui.button(this, "Fix connection") { fixConnection() }
+        col.addView(fixButton, lp(top = if (short) 10 else 20))
         stopButton = Ui.button(this, "Stop receiving") { finish() }
-        col.addView(stopButton, lp(top = if (short) 14 else 28))
+        col.addView(stopButton, lp(top = if (short) 8 else 12))
 
         val scroll = ScrollView(this).apply {
             setBackgroundColor(Ui.BG)
@@ -421,6 +452,93 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         }
     }
 
+    // ---- network health and self-repair ---------------------------------------------------------------
+
+    private fun nowMs() = System.nanoTime() / 1_000_000
+
+    /** Every few seconds while waiting: asks the router if it is still there and keeps the status line up to date. */
+    private fun checkHealth() {
+        renderHealth()
+        if (streaming || !checkingRouter.compareAndSet(false, true)) return
+        val gateway = NetworkHealth.gateway(this)
+        Thread({
+            val ok = gateway?.let { NetworkHealth.routerReachable(it) }
+            main.post {
+                checkingRouter.set(false)
+                if (isDestroyed || !visible) return@post
+                routerOk = ok
+                if (ok != null && !streaming && !healing && healPolicy.onRouterCheck(ok, nowMs())) {
+                    heal("This TV lost contact with its router", rejoinWifi = true)
+                }
+                renderHealth()
+            }
+        }, "ps-health").apply { isDaemon = true; start() }
+    }
+
+    private fun renderHealth() {
+        val heard = maxOf(advertiser.lastHeardAt, server.lastAcceptAt)
+        val from = if (advertiser.lastHeardAt >= server.lastAcceptAt) advertiser.lastHeardFrom else server.lastAcceptFrom
+        healthText.text = NetworkHealth.summary(
+            wifi = NetworkHealth.wifi(this),
+            hasAddress = lastIps.isNotEmpty(),
+            routerOk = routerOk,
+            contactAgoSec = if (heard == 0L) null else ((nowMs() - heard) / 1000).coerceAtLeast(0),
+            contactFrom = from,
+            resetNote = resetNote,
+        )
+    }
+
+    private fun fixConnection() {
+        if (healing) {
+            flashNote("Already refreshing the connection…")
+            return
+        }
+        healPolicy.onManual(nowMs())
+        heal("Refreshing the connection", rejoinWifi = true)
+    }
+
+    private fun onHelpRequested(from: String) {
+        if (isDestroyed || !visible || streaming || healing) return
+        if (healPolicy.onHelpRequest(nowMs())) heal("A phone ($from) could not reach this TV", rejoinWifi = true)
+    }
+
+    /**
+     * What restarting the TV did for the connection, without restarting the TV: a fresh listening socket, a fresh
+     * announcement, fresh Wi-Fi locks and, where the system allows it, dropping and rejoining the Wi-Fi.
+     */
+    private fun heal(reason: String, rejoinWifi: Boolean) {
+        if (isDestroyed || healing) return
+        healing = true
+        main.postDelayed({ healing = false }, HEAL_BUSY_MS)
+        server.restartListener()
+        advertiser.stop()
+        advertiser.start()
+        wifiKeepAlive.release()
+        wifiKeepAlive.acquire()
+        val time = android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date())
+        if (rejoinWifi && WifiRecovery.reconnect(this)) {
+            resetNote = "Wi-Fi refreshed $time"
+            flashNote("$reason. Rejoining the Wi-Fi…")
+        } else {
+            resetNote = "restarted $time"
+            if (rejoinWifi) {
+                flashNote("$reason. This TV won't let apps reset the Wi-Fi: if phones still can't connect, switch Wi-Fi off and on in the TV's network settings.")
+            } else {
+                flashNote("$reason. Connection refreshed.")
+            }
+        }
+        renderHealth()
+    }
+
+    /** A note on the idle screen that goes away again by itself. */
+    private fun flashNote(text: String) {
+        if (streaming) return
+        showNote(text)
+        main.postDelayed({
+            if (!isDestroyed && !serverErrorShown && idleNote.text == text) showNote(null)
+        }, NOTE_MS)
+    }
+
     /** Centres its child at the stream's aspect ratio as large as possible (letterbox / pillarbox). */
     private class AspectLayout(context: Context) : FrameLayout(context) {
         private var aw = 16
@@ -466,5 +584,8 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
 
     companion object {
         private const val OVERLAY_MS = 5000L
+        private const val HEALTH_MS = 5000L
+        private const val HEAL_BUSY_MS = 12000L
+        private const val NOTE_MS = 25000L
     }
 }

@@ -22,6 +22,33 @@ object ReceiverLocator {
     }
 
     /**
+     * Tells a receiver that cannot be reached to refresh its network connection. Sent three times as a broadcast
+     * (it needs no route to the receiver) and straight to [host]; a datagram can get lost, a repeat is cheap.
+     */
+    fun askForHelp(
+        name: String,
+        host: String,
+        targets: List<InetAddress> = DeviceInfo.broadcastAddresses(),
+        port: Int = Proto.DEFAULT_PORT,
+    ) {
+        val socket = try {
+            DatagramSocket().apply { broadcast = true }
+        } catch (_: Exception) {
+            return
+        }
+        socket.use { s ->
+            val msg = HelpRequest.encode(name, host)
+            val all = targets + listOfNotNull(try { InetAddress.getByName(host) } catch (_: Exception) { null })
+            for (round in 0 until 3) {
+                for (a in all) {
+                    try { s.send(DatagramPacket(msg, msg.size, a, port)) } catch (_: Exception) {}
+                }
+                if (round < 2) try { Thread.sleep(120) } catch (_: InterruptedException) { return }
+            }
+        }
+    }
+
+    /**
      * Probes every address in [targets] plus the [knownHosts] directly and collects replies for about [waitMs].
      * Returns the live receivers called [name] (case-insensitive), or every live receiver when [name] is null.
      * Blocking: call it from a worker thread.

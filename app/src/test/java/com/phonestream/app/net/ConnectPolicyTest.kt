@@ -69,6 +69,25 @@ class ConnectPolicyTest {
     }
 
     @Test
+    fun onlyAbsenceFromTheNetworkIsWorthAskingTheReceiverForHelp() {
+        assertTrue(ConnectPolicy.unreachable(unreachable))
+        assertTrue(ConnectPolicy.unreachable(NoRouteToHostException("x")))
+        assertTrue(ConnectPolicy.unreachable(SocketTimeoutException("x")))
+        assertTrue(ConnectPolicy.unreachable(NoAnswerException("silent")))
+        assertFalse("something answered 'no': the app is not listening, not a dead radio", ConnectPolicy.unreachable(refused))
+        assertFalse(ConnectPolicy.unreachable(IOException("TV runs an older PhoneStream")))
+    }
+
+    @Test
+    fun theHelpRequestIsMentionedOnlyWhenItWasSent() {
+        val without = ConnectPolicy.explain("WZ-FTS", "192.168.178.93", 47800, unreachable, 5)
+        val with = ConnectPolicy.explain("WZ-FTS", "192.168.178.93", 47800, unreachable, 5, askedForHelp = true)
+        assertFalse(without, "Fix connection" in without)
+        assertTrue(with, with.startsWith(without))
+        assertTrue(with, "asked WZ-FTS to refresh its Wi-Fi" in with && "“Fix connection”" in with)
+    }
+
+    @Test
     fun refusedMeansNothingListensThere() {
         val text = ConnectPolicy.explain("WZ-FTS", "192.168.178.93", 47800, refused, 1)
         assertTrue(text, "ECONNREFUSED (Connection refused)" in text)

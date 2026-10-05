@@ -46,6 +46,19 @@ class ReceiverAdvertiser(context: Context, private val name: String, private val
     @Volatile
     private var busy = false
 
+    /** A phone asked this receiver, by name or address, to refresh its network connection (called on a background thread). */
+    @Volatile
+    var onHelpRequested: ((from: String) -> Unit)? = null
+
+    /** The last discovery probe or help request that reached this receiver: when (ms of [System.nanoTime]) and from where. */
+    @Volatile
+    var lastHeardAt = 0L
+        private set
+
+    @Volatile
+    var lastHeardFrom: String? = null
+        private set
+
     private var udp: DatagramSocket? = null
     private var udpThread: Thread? = null
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -213,8 +226,14 @@ class ReceiverAdvertiser(context: Context, private val name: String, private val
                         if (busy) continue
                         val text = String(p.data, 0, p.length, Charsets.UTF_8).trim()
                         if (text == Proto.UDP_PROBE) {
+                            lastHeardFrom = p.address.hostAddress
+                            lastHeardAt = System.nanoTime() / 1_000_000
                             val reply = replyBytes()
                             s.send(DatagramPacket(reply, reply.size, p.address, p.port))
+                        } else if (text.startsWith(Proto.UDP_HELP) && HelpRequest.isForMe(p.data, p.length, name, DeviceInfo.localIpv4())) {
+                            lastHeardFrom = p.address.hostAddress
+                            lastHeardAt = System.nanoTime() / 1_000_000
+                            onHelpRequested?.invoke(p.address.hostAddress ?: "a phone")
                         }
                     } catch (_: java.net.SocketTimeoutException) {
                     } catch (e: Exception) {

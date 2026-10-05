@@ -100,6 +100,24 @@ class ReceiverLocatorTest {
     }
 
     @Test
+    fun aHelpRequestArrivesRepeatedAndAddressedToTheReceiver() {
+        val ear = DatagramSocket(0, lo).also { sockets += it; it.soTimeout = 1000 }
+        ReceiverLocator.askForHelp("WZ-FTS", "127.0.0.1", targets = listOf(lo), port = ear.localPort)
+        var received = 0
+        try {
+            while (true) {
+                val p = DatagramPacket(ByteArray(256), 256)
+                ear.receive(p)
+                assertTrue(HelpRequest.isForMe(p.data, p.length, "WZ-FTS", emptyList()))
+                received++
+            }
+        } catch (_: java.net.SocketTimeoutException) {
+        }
+        // Three rounds, each to the broadcast list and straight to the host: a lost datagram is not the end of it.
+        assertTrue("received $received", received >= 3)
+    }
+
+    @Test
     fun silenceReturnsEmptyOnTime() {
         val quiet = DatagramSocket(0, lo).also { sockets += it } // nobody reads or answers
         val t0 = System.nanoTime()

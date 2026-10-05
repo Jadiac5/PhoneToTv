@@ -66,6 +66,15 @@ class ReceiverServer(
     /** Connections taken off the listening socket so far; the watchdog uses it to see that accept() is alive. */
     private val accepted = AtomicLong()
 
+    /** When the last connection from another device was taken off the listening socket (ms of [System.nanoTime]; 0 = never), and from where. */
+    @Volatile
+    var lastAcceptAt = 0L
+        private set
+
+    @Volatile
+    var lastAcceptFrom: String? = null
+        private set
+
     /** The port actually bound (differs from the constructor argument only when that was 0). */
     @Volatile
     var localPort = port
@@ -155,6 +164,10 @@ class ReceiverServer(
                 }
                 failures = 0
                 accepted.incrementAndGet()
+                if (!s.inetAddress.isLoopbackAddress) { // not the watchdog's own knock
+                    lastAcceptFrom = s.inetAddress.hostAddress
+                    lastAcceptAt = System.nanoTime() / 1_000_000
+                }
                 Thread({ handle(s) }, "ps-recv-conn").apply { isDaemon = true; start() }
             }
             synchronized(lock) { if (serverSocket === ss) serverSocket = null }
@@ -193,6 +206,12 @@ class ReceiverServer(
             if (!pause(10)) return true
         }
         return true
+    }
+
+    /** Replaces the listening socket by a fresh one now (a session that is running is left alone). */
+    fun restartListener() {
+        val gen = synchronized(lock) { generation }
+        replaceListener(gen)
     }
 
     private fun replaceListener(gen: Int) {
