@@ -5,8 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-val appVersion = "1.1.1"
-val appVersionCode = 3
+val appVersion = "1.1.2"
+val appVersionCode = 4
 
 // Release signing: keystore.properties (storeFile, storePassword, keyAlias, keyPassword) in the repo root.
 val keystoreProps = Properties().apply {

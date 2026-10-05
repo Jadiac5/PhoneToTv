@@ -170,8 +170,9 @@ class SettingsActivity : Activity() {
         card.addView(
             Ui.label(
                 this,
-                "On the TV the picture follows the sound automatically. If it is still early or late (a soundbar or " +
-                    "Bluetooth speaker adds delay), nudge it here: plus delays the picture.",
+                "On the TV the picture follows the sound automatically. If they are still out of step (a soundbar or " +
+                    "Bluetooth speaker adds delay), nudge the picture here. Sound heard after the picture: press " +
+                    "\"Picture later\". Sound heard before the picture: press \"Picture earlier\". The sound itself is never changed.",
                 14f, Ui.MUTED
             ),
             lp(top = 4)
@@ -181,11 +182,11 @@ class SettingsActivity : Activity() {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val gap = Ui.dp(this, 8)
         row.addView(
-            Ui.button(this, "Earlier") { nudgeSync(-Prefs.SYNC_STEP_MS) },
+            Ui.button(this, "Picture earlier") { nudgeSync(-Prefs.SYNC_STEP_MS) },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = gap }
         )
         row.addView(
-            Ui.button(this, "Later") { nudgeSync(Prefs.SYNC_STEP_MS) },
+            Ui.button(this, "Picture later") { nudgeSync(Prefs.SYNC_STEP_MS) },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = gap }
         )
         card.addView(row, lp(top = 10))
@@ -203,8 +204,8 @@ class SettingsActivity : Activity() {
         val v = Prefs.syncOffsetMs(this)
         syncValue.text = when {
             v == 0 -> "Picture delay: none (automatic)"
-            v > 0 -> "Picture delay: +$v ms"
-            else -> "Picture delay: $v ms"
+            v > 0 -> "Picture shown $v ms later"
+            else -> "Picture shown ${-v} ms earlier"
         }
     }
 

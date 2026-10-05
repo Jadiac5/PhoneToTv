@@ -2,6 +2,14 @@
 
 The section of the newest version is what the app shows as "What's new" when it offers an update.
 
+## 1.1.2
+
+- **A TV in Receive mode stays reachable.** After updating to 1.1.1 some phones got "Can't reach <TV>. Is PhoneStream open on it in Receive mode?" while the TV was showing Receive mode (restarting the TV helped, and it could come back after a few connections). The TV now retries its network port when it is still held by the previous copy of the app, never gets stuck "busy" if the video or sound player fails while a stream ends, and checks every few seconds that it still answers on its own port: if it doesn't, it opens a fresh one by itself. If it really can't listen, it says "Not ready" and why. The root cause could not be reproduced here, so please tell me if you still see the message.
+- **Clearer connection errors on the phone**: the message now names the address it tried and the reason the system gave (for example "Connection refused" or "Network is unreachable"), and distinguishes "no answer" from "answered but did not reply".
+- **Settings, "Picture and sound in step"**: the buttons now read "Picture earlier" and "Picture later", and the text says which to press (the sound itself is never changed).
+
+Install it on both phone and TV (the protocol is unchanged, so the in-app update works).
+
 ## 1.1.1
 
 - **No more stutter-then-fast-forward.** The TV used to show every frame the moment it was decoded, so when Wi-Fi or a big frame (lots of motion on screen) held the stream up for a moment, the picture froze and then played everything that had piled up at high speed. Frames now carry the phone's capture time and the TV plays them at that pace, with a small adaptive buffer (it grows at once when the network hiccups and shrinks slowly). If the TV is ever far behind, the picture jumps ahead instead of racing through the backlog.

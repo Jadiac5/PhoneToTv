@@ -204,7 +204,12 @@ class SenderSession(
         s.keepAlive = true
         // Small on purpose: whatever the kernel buffers is delay we can't take back. The PacketWriter does the queueing.
         s.sendBufferSize = SEND_BUFFER
-        s.connect(InetSocketAddress(target.host, target.port), 5000)
+        try {
+            s.connect(InetSocketAddress(target.host, target.port), 5000)
+        } catch (e: SocketTimeoutException) {
+            // Nothing answered at that address at all (as opposed to "answered, then went quiet" below).
+            throw IOException("No answer from ${target.name} at ${target.host}:${target.port}. Is it on the same Wi-Fi? Try closing PhoneStream on it and opening Receive again.")
+        }
         s.soTimeout = 5000 // from now on: no packet (not even a heartbeat) for 5 s = receiver is gone
 
         val ps = PacketStream(s.getInputStream(), s.getOutputStream())
@@ -212,7 +217,7 @@ class SenderSession(
         val reply = try {
             ps.read()
         } catch (e: SocketTimeoutException) {
-            throw e
+            throw IOException("${target.name} accepted the connection but did not reply. Close PhoneStream on it and open Receive again.")
         } catch (e: IOException) {
             if (closed.get()) throw e
             // PhoneStream 1.0 receivers simply hang up on a newer sender.
@@ -513,7 +518,10 @@ class SenderSession(
     }
 
     private fun describe(e: Exception): String = when (e) {
-        is ConnectException -> "Can't reach ${target.name}. Is PhoneStream open on it in Receive mode?"
+        is ConnectException -> {
+            val why = e.message?.substringAfterLast(": ")?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
+            "Can't reach ${target.name} at ${target.host}:${target.port}$why. Is PhoneStream open on it in Receive mode?"
+        }
         is SocketTimeoutException -> "${target.name} did not answer"
         is NoRouteToHostException, is UnknownHostException -> "Can't find ${target.host} on the network"
         is IOException -> e.message ?: "Network error"

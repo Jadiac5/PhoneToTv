@@ -61,6 +61,8 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     private var videoH = 0
     private var lastIps: List<String> = emptyList()
     private var netCallback: ConnectivityManager.NetworkCallback? = null
+    private var visible = false
+    private var serverErrorShown = false
 
     @Volatile
     private var pendingNote: String? = null
@@ -124,12 +126,14 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         clock.syncOffsetMs = Prefs.syncOffsetMs(this)
         lastIps = DeviceInfo.localIpv4()
         updateIpText()
-        advertiser.start()
+        visible = true
+        // The advertisement starts in onListening(): a TV that shows up in the phone's list must really be reachable.
         server.start()
         watchNetwork()
     }
 
     override fun onStop() {
+        visible = false
         unwatchNetwork()
         server.stop()
         advertiser.stop()
@@ -296,7 +300,12 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
 
     override fun onListening() {
         runOnUiThread {
-            if (isDestroyed) return@runOnUiThread
+            if (isDestroyed || !visible) return@runOnUiThread
+            advertiser.start()
+            if (serverErrorShown) {
+                serverErrorShown = false
+                showNote(null)
+            }
             if (!streaming) idleStatus.text = "Waiting for a sender…"
         }
     }
@@ -304,6 +313,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     override fun onServerError(message: String) {
         runOnUiThread {
             if (isDestroyed) return@runOnUiThread
+            serverErrorShown = true
             idleStatus.text = "Not ready"
             showNote(message)
         }

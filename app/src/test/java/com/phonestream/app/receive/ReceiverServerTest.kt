@@ -22,11 +22,14 @@ import org.junit.Before
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class ReceiverServerTest {
@@ -68,7 +71,9 @@ class ReceiverServerTest {
     private class Events : ReceiverServer.Listener {
         val q = LinkedBlockingQueue<String>()
         val listening = CountDownLatch(1)
+        val listeningCalls = AtomicInteger()
         override fun onListening() {
+            listeningCalls.incrementAndGet()
             listening.countDown()
         }
 
@@ -318,6 +323,158 @@ class ReceiverServerTest {
         assertArrayEquals(delta, second.data.copyOfRange(second.offset, second.data.size))
 
         assertEquals(2, (0 until 2).count { audio.chunks.poll(5, TimeUnit.SECONDS) != null })
+    }
+
+    // ---- the listening socket itself ------------------------------------------------------------------
+
+    private fun freePort(): Int = ServerSocket(0).use { it.localPort }
+
+    /** A socket that really holds the port (exclusive on every OS), like a previous copy of the app that is still dying. */
+    private fun holdPort(port: Int) = ServerSocket().apply {
+        reuseAddress = false
+        bind(InetSocketAddress(port))
+    }
+
+    private fun connectEventually(port: Int): Client {
+        val until = System.nanoTime() + 5_000_000_000L
+        while (true) {
+            try {
+                return Client(port).also { clients += it }
+            } catch (e: java.io.IOException) {
+                if (System.nanoTime() > until) throw e
+                Thread.sleep(20)
+            }
+        }
+    }
+
+    @Test
+    fun waitsForATakenPortInsteadOfGivingUp() {
+        val port = freePort()
+        val blocker = holdPort(port)
+        val ev = Events()
+        val s = ReceiverServer("TV", FakeVideo(), FakeAudio(), ev, port = port, bindRetryMs = 20, reportAfterMs = 60_000)
+        try {
+            s.start()
+            assertFalse("listening although the port is taken", ev.listening.await(300, TimeUnit.MILLISECONDS))
+            assertTrue("a short blockage must not be reported as an error", ev.q.isEmpty())
+            blocker.close()
+            assertTrue("never started listening after the port was freed", ev.listening.await(5, TimeUnit.SECONDS))
+            assertTrue(connectEventually(port).handshake("Pixel").accepted)
+        } finally {
+            s.stop()
+            blocker.close()
+        }
+    }
+
+    @Test
+    fun aPortThatStaysTakenIsReportedAndStillRetried() {
+        val port = freePort()
+        val blocker = holdPort(port)
+        val ev = Events()
+        val s = ReceiverServer("TV", FakeVideo(), FakeAudio(), ev, port = port, bindRetryMs = 20, reportAfterMs = 150)
+        try {
+            s.start()
+            val msg = ev.next()
+            assertTrue(msg, msg.startsWith("error:") && msg.contains("$port"))
+            assertTrue("reported more than once", ev.q.poll(300, TimeUnit.MILLISECONDS) == null)
+            blocker.close()
+            assertTrue(ev.listening.await(5, TimeUnit.SECONDS))
+            assertTrue(connectEventually(port).handshake("Pixel").accepted)
+        } finally {
+            s.stop()
+            blocker.close()
+        }
+    }
+
+    @Test
+    fun quickStopsAndStartsLeaveExactlyOneListenerAndNoFalseAlarm() {
+        val port = freePort()
+        val ev = Events()
+        val s = ReceiverServer("TV", FakeVideo(), FakeAudio(), ev, port = port, bindRetryMs = 20, reportAfterMs = 2_000)
+        try {
+            repeat(10) { s.start(); s.stop() } // the TV's screen saver coming and going
+            s.start()
+            assertTrue(connectEventually(port).handshake("Pixel").accepted)
+            assertEquals("started:Pixel", ev.next())
+            assertTrue("a false 'can't listen' alarm", ev.q.isEmpty())
+        } finally {
+            s.stop()
+        }
+        Thread.sleep(300)
+        try {
+            Client(port).close()
+            throw AssertionError("still listening after stop()")
+        } catch (_: java.net.ConnectException) {
+        }
+    }
+
+    @Test
+    fun aListenerThatStopsAcceptingIsReplacedByAFreshOne() {
+        val port = freePort()
+        val ev = Events()
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger()
+        // The first listener's thread hangs (inside this callback) and never accepts anybody.
+        val hanging = object : ReceiverServer.Listener by ev {
+            override fun onListening() {
+                if (calls.getAndIncrement() == 0) release.await(20, TimeUnit.SECONDS) else ev.onListening()
+            }
+        }
+        val s = ReceiverServer("TV", FakeVideo(), FakeAudio(), hanging, port = port, watchdogMs = 100)
+        try {
+            s.start()
+            assertTrue("never replaced the hanging listener", ev.listening.await(10, TimeUnit.SECONDS))
+            assertTrue(connectEventually(port).handshake("Pixel").accepted)
+            assertEquals("started:Pixel", ev.next())
+        } finally {
+            release.countDown()
+            s.stop()
+        }
+    }
+
+    @Test
+    fun aHealthyListenerIsLeftAlone() {
+        val port = freePort()
+        val ev = Events()
+        val s = ReceiverServer("TV", FakeVideo(), FakeAudio(), ev, port = port, watchdogMs = 100)
+        try {
+            s.start()
+            assertTrue(ev.listening.await(5, TimeUnit.SECONDS))
+            Thread.sleep(1200) // a dozen checks
+            assertEquals("a healthy listener was replaced", 1, ev.listeningCalls.get())
+            assertTrue(connectEventually(port).handshake("Pixel").accepted)
+            assertEquals("started:Pixel", ev.next())
+            assertTrue("the checks leaked into the session", ev.q.isEmpty())
+        } finally {
+            s.stop()
+        }
+    }
+
+    @Test
+    fun aPlayerThatFailsOnTheWayOutDoesNotLeaveTheReceiverBusy() {
+        val flaky = object : VideoSink by video {
+            override fun configure(cfg: VideoConfig?) {
+                if (cfg == null) throw IllegalStateException("codec.stop() blew up")
+                video.configure(cfg)
+            }
+        }
+        val own = ReceiverServer("TV", flaky, FakeAudio(), events, port = 0, canDecode = { true })
+        val ev = events
+        own.start()
+        try {
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (own.localPort == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+            val first = Client(own.localPort).also { clients += it }
+            assertTrue(first.handshake("Pixel").accepted)
+            assertEquals("started:Pixel", ev.next())
+            first.ps.write(Proto.T_BYE, Msg.bye("done"))
+            assertEquals("ended:done", ev.next()) // reached although configure(null) threw
+            val second = Client(own.localPort).also { clients += it }
+            val ack = second.handshake("Pixel")
+            assertTrue(ack.reason, ack.accepted) // not "Busy"
+        } finally {
+            own.stop()
+        }
     }
 
     @Test

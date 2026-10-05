@@ -101,7 +101,7 @@ How it keeps the delay low:
 | Phone keeps playing sound | Your phone's Android lets the capture follow the volume; the app detected that and left the phone audible. Use headphones on the phone. |
 | Stops when the phone is locked or after a while | Disable battery optimization for PhoneStream; some phones kill background apps aggressively (see dontkillmyapp.com). |
 | Stutter / freezes | Move closer to the router; put the TV on Ethernet; try a lower preset. |
-| Sound a bit before or after the picture | Settings → Picture and sound in step on the TV: Later if the sound comes late (the picture waits), Earlier if the sound comes first. |
+| Sound a bit before or after the picture | Settings → Picture and sound in step, on the TV (the receiving device): **Picture later** if you hear the sound after the picture, **Picture earlier** if you hear it before. Only the picture moves; the sound is never changed. |
 | Update button says it can't reach GitHub | The device needs internet access for this one feature; streaming itself works offline. |
 
 ## Building from source
