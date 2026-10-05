@@ -83,6 +83,11 @@ class StreamService : Service() {
         val name = i.getStringExtra(EXTRA_NAME) ?: "receiver"
         val host = i.getStringExtra(EXTRA_HOST)
         val port = i.getIntExtra(EXTRA_PORT, 0)
+        val alternates = i.getStringArrayExtra(EXTRA_ALTERNATES).orEmpty().mapNotNull { a ->
+            val h = a.substringBeforeLast(':', "")
+            val p = a.substringAfterLast(':').toIntOrNull()
+            if (h.isNotEmpty() && p != null) Receiver(name, h, p) else null
+        }
         val preset = Preset.fromName(i.getStringExtra(EXTRA_PRESET))
         val aspect = AspectMode.fromName(i.getStringExtra(EXTRA_ASPECT))
         val audio = i.getBooleanExtra(EXTRA_AUDIO, true)
@@ -117,7 +122,7 @@ class StreamService : Service() {
         }, main)
 
         acquireLocks()
-        session = SenderSession(applicationContext, proj, Receiver(name, host, port), preset, aspect, audio, mute) { reason ->
+        session = SenderSession(applicationContext, proj, Receiver(name, host, port), alternates, preset, aspect, audio, mute) { reason ->
             main.post { onSessionEnded(reason) }
         }.also { it.start() }
     }
@@ -251,6 +256,7 @@ class StreamService : Service() {
         const val EXTRA_NAME = "name"
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
+        const val EXTRA_ALTERNATES = "alternates"
         const val EXTRA_PRESET = "preset"
         const val EXTRA_ASPECT = "aspect"
         const val EXTRA_AUDIO = "audio"
@@ -262,13 +268,14 @@ class StreamService : Service() {
         private const val NOTIF_ID = 1
 
         fun startIntent(
-            ctx: Context, r: Receiver, preset: Preset, aspect: AspectMode, audio: Boolean, mutePhone: Boolean,
+            ctx: Context, r: Receiver, alternates: List<Receiver>, preset: Preset, aspect: AspectMode, audio: Boolean, mutePhone: Boolean,
             resultCode: Int, grant: Intent,
         ) = Intent(ctx, StreamService::class.java)
             .setAction(ACTION_START)
             .putExtra(EXTRA_NAME, r.name)
             .putExtra(EXTRA_HOST, r.host)
             .putExtra(EXTRA_PORT, r.port)
+            .putExtra(EXTRA_ALTERNATES, alternates.map { "${it.host}:${it.port}" }.toTypedArray())
             .putExtra(EXTRA_PRESET, preset.name)
             .putExtra(EXTRA_ASPECT, aspect.name)
             .putExtra(EXTRA_AUDIO, audio)

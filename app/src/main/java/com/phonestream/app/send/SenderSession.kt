@@ -25,8 +25,11 @@ import com.phonestream.app.core.StreamPlan
 import com.phonestream.app.core.Tuner
 import com.phonestream.app.core.VideoConfig
 import com.phonestream.app.media.Codecs
+import com.phonestream.app.net.ConnectPolicy
 import com.phonestream.app.net.DeviceInfo
+import com.phonestream.app.net.NoAnswerException
 import com.phonestream.app.net.Receiver
+import com.phonestream.app.net.ReceiverLocator
 import java.io.IOException
 import java.net.ConnectException
 import java.net.InetSocketAddress
@@ -51,6 +54,7 @@ class SenderSession(
     private val ctx: Context,
     private val projection: MediaProjection,
     private val target: Receiver,
+    private val alternates: List<Receiver>,
     private var preset: Preset,
     private var aspect: AspectMode,
     private val wantAudio: Boolean,
@@ -76,6 +80,10 @@ class SenderSession(
 
     @Volatile
     private var socket: Socket? = null
+
+    /** The address being tried (it can change between attempts when the receiver turns up elsewhere). */
+    @Volatile
+    private var current: Receiver = target
 
     @Volatile
     private var writer: PacketWriter? = null
@@ -193,22 +201,73 @@ class SenderSession(
         }
     }
 
+    /**
+     * Connects, retrying: a receiver that does not answer at once is asked for again a few times, and between
+     * tries the network is asked where it is now (its address may have changed since the phone last saw it).
+     */
     private fun connect(): PacketStream? {
+        var candidates = listOf(target) + alternates.filter { it.key != target.key }
+        var last: Exception? = null
+        var tries = 0
+        for (attempt in 0 until ConnectPolicy.ATTEMPTS) {
+            if (attempt > 0) {
+                StreamState.update { it.copy(status = "Still trying to reach ${target.name}… (try ${attempt + 1} of ${ConnectPolicy.ATTEMPTS})") }
+                if (!pause(ConnectPolicy.pauseBeforeMs(attempt))) return null
+                candidates = relocate(candidates)
+                if (closed.get()) return null
+            }
+            val r = candidates[attempt % candidates.size]
+            current = r
+            tries = attempt + 1
+            try {
+                return connectTo(r)
+            } catch (e: Exception) {
+                if (closed.get() || !ConnectPolicy.retryable(e)) throw e
+                last = e
+            }
+        }
+        val e = last ?: IOException("Could not connect")
+        throw IOException(ConnectPolicy.explain(target.name, current.host, current.port, e, tries))
+    }
+
+    /** Sleeps [ms] in small steps; false if the session was ended meanwhile. */
+    private fun pause(ms: Long): Boolean {
+        val until = SystemClock.elapsedRealtime() + ms
+        while (SystemClock.elapsedRealtime() < until) {
+            if (closed.get()) return false
+            try { Thread.sleep(100) } catch (_: InterruptedException) { return false }
+        }
+        return !closed.get()
+    }
+
+    /** Puts the addresses where [target]'s name was heard just now first, the rest after them. */
+    private fun relocate(known: List<Receiver>): List<Receiver> {
+        val live = try {
+            if (target.name == target.host) emptyList() // typed in by hand: there is no name to look for
+            else ReceiverLocator.find(target.name, knownHosts = known.map { it.host })
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return (live + known).distinctBy { it.key }
+    }
+
+    private fun connectTo(r: Receiver): PacketStream {
+        try { socket?.close() } catch (_: Exception) {}
         val s = Socket()
         socket = s
         if (closed.get()) {
             s.close()
-            return null
+            throw IOException("Stopped")
         }
         s.tcpNoDelay = true
         s.keepAlive = true
         // Small on purpose: whatever the kernel buffers is delay we can't take back. The PacketWriter does the queueing.
         s.sendBufferSize = SEND_BUFFER
         try {
-            s.connect(InetSocketAddress(target.host, target.port), 5000)
+            s.connect(InetSocketAddress(r.host, r.port), ConnectPolicy.CONNECT_TIMEOUT_MS)
         } catch (e: SocketTimeoutException) {
             // Nothing answered at that address at all (as opposed to "answered, then went quiet" below).
-            throw IOException("No answer from ${target.name} at ${target.host}:${target.port}. Is it on the same Wi-Fi? Try closing PhoneStream on it and opening Receive again.")
+            throw NoAnswerException("No answer from ${target.name} at ${r.host}:${r.port}. Is it on the same Wi-Fi? Try closing PhoneStream on it and opening Receive again.")
         }
         s.soTimeout = 5000 // from now on: no packet (not even a heartbeat) for 5 s = receiver is gone
 
@@ -217,7 +276,7 @@ class SenderSession(
         val reply = try {
             ps.read()
         } catch (e: SocketTimeoutException) {
-            throw IOException("${target.name} accepted the connection but did not reply. Close PhoneStream on it and open Receive again.")
+            throw NoAnswerException("${target.name} accepted the connection but did not reply. Close PhoneStream on it and open Receive again.")
         } catch (e: IOException) {
             if (closed.get()) throw e
             // PhoneStream 1.0 receivers simply hang up on a newer sender.
@@ -518,12 +577,9 @@ class SenderSession(
     }
 
     private fun describe(e: Exception): String = when (e) {
-        is ConnectException -> {
-            val why = e.message?.substringAfterLast(": ")?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""
-            "Can't reach ${target.name} at ${target.host}:${target.port}$why. Is PhoneStream open on it in Receive mode?"
-        }
-        is SocketTimeoutException -> "${target.name} did not answer"
-        is NoRouteToHostException, is UnknownHostException -> "Can't find ${target.host} on the network"
+        is ConnectException, is NoRouteToHostException, is SocketTimeoutException ->
+            ConnectPolicy.explain(target.name, current.host, current.port, e, 1)
+        is UnknownHostException -> "Can't find ${current.host} on the network"
         is IOException -> e.message ?: "Network error"
         else -> e.message ?: e.javaClass.simpleName
     }

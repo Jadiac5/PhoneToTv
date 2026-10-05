@@ -26,6 +26,7 @@ import com.phonestream.app.core.PlayoutClock
 import com.phonestream.app.core.resolutionLabel
 import com.phonestream.app.net.DeviceInfo
 import com.phonestream.app.net.ReceiverAdvertiser
+import com.phonestream.app.net.WifiKeepAlive
 import com.phonestream.app.ui.Ui
 
 /**
@@ -53,6 +54,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     private lateinit var video: VideoPlayer
     private lateinit var server: ReceiverServer
     private lateinit var advertiser: ReceiverAdvertiser
+    private lateinit var wifiKeepAlive: WifiKeepAlive
     private lateinit var deviceName: String
 
     private var streaming = false
@@ -88,6 +90,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         )
         server = ReceiverServer(deviceName, video, audio, this)
         advertiser = ReceiverAdvertiser(this, deviceName)
+        wifiKeepAlive = WifiKeepAlive(this)
 
         val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
 
@@ -128,6 +131,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         updateIpText()
         visible = true
         // The advertisement starts in onListening(): a TV that shows up in the phone's list must really be reachable.
+        wifiKeepAlive.acquire()
         server.start()
         watchNetwork()
     }
@@ -137,6 +141,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
         unwatchNetwork()
         server.stop()
         advertiser.stop()
+        wifiKeepAlive.release()
         main.removeCallbacks(hideOverlay)
         super.onStop()
     }
@@ -144,6 +149,7 @@ class ReceiveActivity : Activity(), ReceiverServer.Listener {
     override fun onDestroy() {
         server.stop()
         advertiser.stop()
+        wifiKeepAlive.release()
         video.release()
         audio.stop()
         super.onDestroy()

@@ -63,6 +63,7 @@ class SendActivity : Activity() {
     private var shownAspect: AspectMode? = null
     private var pending: Receiver? = null
     private var syncingSwitch = false
+    private var lastError: String? = null
 
     private val listener: (StreamSnapshot) -> Unit = { render(it) }
 
@@ -307,9 +308,12 @@ class SendActivity : Activity() {
         if (!active && s.error != null) {
             errorBanner.text = s.error
             errorBanner.visibility = View.VISIBLE
+            // The list may have led us to a stale address: forget it and look again.
+            if (lastError != s.error) discovery.restart()
         } else {
             errorBanner.visibility = View.GONE
         }
+        lastError = if (!active) s.error else null
 
         if (active) {
             statusText.text = if (s.phase == Phase.STREAMING) "Streaming to ${s.receiverName}" else s.status
@@ -406,6 +410,10 @@ class SendActivity : Activity() {
         if (focusedTag != null) listBox.findViewWithTag<View>(focusedTag)?.requestFocus()
     }
 
+    /** Other addresses the same-named receiver was seen at (e.g. over mDNS and over the TV's other network): fallbacks if the first doesn't answer. */
+    private fun otherAddressesOf(r: Receiver): List<Receiver> =
+        receivers.filter { it.name == r.name && it.key != r.key }
+
     private fun askForIp() {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
@@ -482,7 +490,7 @@ class SendActivity : Activity() {
             )
         }
         try {
-            startForegroundService(StreamService.startIntent(this, r, preset, aspect, audioSwitch.isChecked, mute, resultCode, data))
+            startForegroundService(StreamService.startIntent(this, r, otherAddressesOf(r), preset, aspect, audioSwitch.isChecked, mute, resultCode, data))
         } catch (e: Exception) {
             StreamState.update {
                 StreamSnapshot(

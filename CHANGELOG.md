@@ -2,6 +2,15 @@
 
 The section of the newest version is what the app shows as "What's new" when it offers an update.
 
+## 1.1.3
+
+- **The phone no longer gives up after one failed try.** Some phones got "Can't reach <TV> … (No route to host)" while the TV showed Receive mode, and only restarting the TV helped. That message means the phone could not even get a packet to the TV's address (the app on the TV was not the problem). A connect now tries up to four times over about fifteen seconds ("Still trying to reach <TV>… (try 2 of 4)"), and between tries the phone asks the network where a device with that name answers right now, so an address that has changed since the list was built is replaced by the current one.
+- **The TV keeps its Wi-Fi awake while Receive is open**: it holds a Wi-Fi lock and says "I'm here" on the network every few seconds, so a sleepy Wi-Fi radio can't make it unreachable. (This is my best explanation for a TV that only a restart cured; I could not reproduce it on test devices, so please tell me if it still happens.)
+- **A failed connection refreshes the device list** instead of leaving a possibly out-of-date entry on screen.
+- **A "no route" error now says what it means**: the phone cannot reach that address, so check that it is on the same Wi-Fi as the TV (not a guest network), or enter the address shown on the TV's screen by hand.
+
+Install it on both phone and TV (the protocol is unchanged, so the in-app update works).
+
 ## 1.1.2
 
 - **A TV in Receive mode stays reachable.** After updating to 1.1.1 some phones got "Can't reach <TV>. Is PhoneStream open on it in Receive mode?" while the TV was showing Receive mode (restarting the TV helped, and it could come back after a few connections). The TV now retries its network port when it is still held by the previous copy of the app, never gets stuck "busy" if the video or sound player fails while a stream ends, and checks every few seconds that it still answers on its own port: if it doesn't, it opens a fresh one by itself. If it really can't listen, it says "Not ready" and why. The root cause could not be reproduced here, so please tell me if you still see the message.

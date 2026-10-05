@@ -202,8 +202,10 @@ class ReceiverAdvertiser(context: Context, private val name: String, private val
             s.broadcast = true
             s.bind(InetSocketAddress(port))
             udp = s
+            s.soTimeout = ANNOUNCE_MS.toInt()
             udpThread = Thread({
                 val buf = ByteArray(256)
+                var lastAnnounce = SystemClock.elapsedRealtime()
                 while (!s.isClosed) {
                     try {
                         val p = DatagramPacket(buf, buf.size)
@@ -211,11 +213,22 @@ class ReceiverAdvertiser(context: Context, private val name: String, private val
                         if (busy) continue
                         val text = String(p.data, 0, p.length, Charsets.UTF_8).trim()
                         if (text == Proto.UDP_PROBE) {
-                            val reply = "${Proto.UDP_REPLY}\n$name\n$port".toByteArray(Charsets.UTF_8)
+                            val reply = replyBytes()
                             s.send(DatagramPacket(reply, reply.size, p.address, p.port))
                         }
+                    } catch (_: java.net.SocketTimeoutException) {
                     } catch (e: Exception) {
                         if (s.isClosed) break
+                    }
+                    // Unprompted "I'm here" now and then: it keeps a sleepy Wi-Fi radio awake and the router's idea
+                    // of where this device is fresh, which is what makes a TV answer when a phone connects later.
+                    val now = SystemClock.elapsedRealtime()
+                    if (!busy && !s.isClosed && now - lastAnnounce >= ANNOUNCE_MS) {
+                        lastAnnounce = now
+                        val reply = replyBytes()
+                        for (addr in DeviceInfo.broadcastAddresses()) {
+                            try { s.send(DatagramPacket(reply, reply.size, addr, port)) } catch (_: Exception) {}
+                        }
                     }
                 }
             }, "ps-udp-responder").apply { isDaemon = true; start() }
@@ -225,10 +238,16 @@ class ReceiverAdvertiser(context: Context, private val name: String, private val
         }
     }
 
+    private fun replyBytes() = "${Proto.UDP_REPLY}\n$name\n$port".toByteArray(Charsets.UTF_8)
+
     private fun stopUdp() {
         try { udp?.close() } catch (_: Exception) {}
         udp = null
         udpThread = null
+    }
+
+    private companion object {
+        const val ANNOUNCE_MS = 3000L
     }
 }
 
@@ -248,6 +267,10 @@ class SenderDiscovery(context: Context, private val onChanged: (List<Receiver>) 
 
     @Volatile
     private var running = false
+
+    /** The screen wants discovery on (between [start] and [stop]); [restart] pauses [running] but not this. */
+    @Volatile
+    private var wanted = false
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var probeThread: Thread? = null
@@ -258,6 +281,11 @@ class SenderDiscovery(context: Context, private val onChanged: (List<Receiver>) 
     private var resolving = false
 
     fun start() {
+        wanted = true
+        begin()
+    }
+
+    private fun begin() {
         if (running) return
         running = true
         try {
@@ -274,6 +302,11 @@ class SenderDiscovery(context: Context, private val onChanged: (List<Receiver>) 
     }
 
     fun stop() {
+        wanted = false
+        halt()
+    }
+
+    private fun halt() {
         running = false
         main.removeCallbacks(pruneTask)
         stopNsd()
@@ -285,6 +318,17 @@ class SenderDiscovery(context: Context, private val onChanged: (List<Receiver>) 
         entries.clear()
         nsdNames.clear()
         main.post { resolveQueue.clear(); resolving = false }
+    }
+
+    /** Forgets everything found so far and looks again (after a connection failed, the list may be out of date). */
+    fun restart() {
+        if (!running) return
+        halt()
+        main.post {
+            if (!wanted) return@post
+            onChanged(emptyList()) // what was listed is exactly what may be out of date
+            if (!running) begin()
+        }
     }
 
     // ---- mDNS -----------------------------------------------------------------------------------------
@@ -410,11 +454,7 @@ class SenderDiscovery(context: Context, private val onChanged: (List<Receiver>) 
     }
 
     private fun handleReply(p: DatagramPacket) {
-        val parts = String(p.data, 0, p.length, Charsets.UTF_8).split('\n')
-        if (parts.size < 3 || parts[0] != Proto.UDP_REPLY) return
-        val port = parts[2].trim().toIntOrNull() ?: return
-        val host = (p.address as? Inet4Address)?.hostAddress ?: return
-        val r = Receiver(parts[1].trim().ifEmpty { host }, host, port)
+        val r = ReceiverLocator.parseReply(p.data, p.length, p.address) ?: return
         val now = SystemClock.elapsedRealtime()
         val existing = entries[r.key]
         if (existing != null) {
